@@ -1,0 +1,592 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <!-- Required meta tags -->
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+
+  <!-- Bootstrap CSS -->
+  <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0/css/bootstrap.min.css"
+    integrity="sha384-Gn5384xqQ1aoWXA+058RXPxPg6fy4IWvTNh0E263XmFcJlSAwiGgFAW/dAiS6JXm" crossorigin="anonymous">
+
+  <title>Chart Analyse</title>
+</head>
+
+<body>
+  <h1></h1>
+
+  <div id="mainChart"> </div>
+
+  <!-- Optional JavaScript -->
+  <!-- jQuery first, then Popper.js, then Bootstrap JS -->
+  <script src="https://code.jquery.com/jquery-3.2.1.min.js" crossorigin="anonymous"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.12.9/umd/popper.min.js"
+    integrity="sha384-ApNbgh9B+Y1QKtv3Rn7W3mgPxhU9K/ScQsAP7hUibX39j7fakFPskvXusvfa0b4Q"
+    crossorigin="anonymous"></script>
+  <script src="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0/js/bootstrap.min.js"
+    integrity="sha384-JZR6Spejh4U02d8jOt6vLEHfe/JQGiRRSQQxSfFWpi1MquVdAyjUar5+76PVCmYl"
+    crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5.0.2/dist/echarts.js" crossorigin="anonymous"></script>
+
+  <style>
+    #mainChart {
+      width: 100%;
+      height: 600px;
+    }
+  </style>
+
+  <script>
+
+    var chartDom = document.getElementById('mainChart');
+    var myChart = echarts.init(chartDom);
+    let option;
+
+    var upColor = '#0f0';
+    var upBorderColor = '#0f0';
+    var downColor = '#ff0000';
+    var downBorderColor = '#f00';
+
+
+    console.log(" Wir laden die daten von unserem Server")
+
+    let data0 = {};
+    jQuery.get("/getChart/IBUST100", (data) => {
+
+
+      // findTrends(listOfPois);
+      // let lastListSize = listOfPois.length;
+
+
+      // listOfPois = calculateVNIndex(listOfPois);
+      // console.log('VNINDEX', listOfPois.map(e => e.vnIndex));
+
+      // listOfPois = classifySignificantPoi(listOfPois);
+      // console.log('significantPoi', listOfPois.map(e => e.significantPoi))
+
+
+
+      let poiList = []
+      findTrends(data, poiList);
+
+      console.log("List of POIs after FindTrends()", poiList);
+
+      // CHECK IF TRENDS ARE REAL...
+
+      let potentialPois = poiList;
+
+      // das ganze wird iterativ....
+      for (let k = 0; k < 1; k++) {
+        console.log('iterative poi validation', k, potentialPois.length)
+        for (let i = 0; i < potentialPois.length - 2; i++) {
+          let diffAB = poiList[i + 1].data.HA.close - poiList[i].data.HA.close;
+          let diffBC = poiList[i + 2].data.HA.close - poiList[i + 1].data.HA.close;
+          let diffPct = Math.abs(diffBC / diffAB);
+          potentialPois[i + 2].diffPct = diffPct;
+          if (diffPct < 0.382) {
+            potentialPois[i + 2].invalidPoi = true;
+            potentialPois[i + 1].invalidPoi = true;
+          } else {
+          }
+        }
+        potentialPois = potentialPois.filter(p => p.invalidPoi != true);
+      }
+
+      // male trends linie nach cleaning
+
+      for (let poi of potentialPois) {
+        data[poi.index].diffPct = poi.diffPct;
+      }
+
+      let lines = [];
+      // generate potential lines 
+      for (let i = 0; i < potentialPois.length - 1; i++) {
+        let s = potentialPois[i].data.HA.close;
+        let e = potentialPois[i + 1].data.HA.close;
+        let si = potentialPois[i].index;
+        let ei = potentialPois[i + 1].index;
+        let diff = e - s;
+        lines.push({ startValue: s, endValue: e, startIndx: si, endIndx: ei, diff, type: undefined });
+      }
+
+
+      // classify potential lines 
+      lines[0].type = "TRENDARM";
+
+      for (let i = 1; i < lines.length - 1; i++) {
+        lines[i].pctDiff = Math.abs(lines[i].diff / lines[i - 1].diff);
+
+        if (lines[i - 1].type == "TRENDARM") {
+
+          if (lines[i].pctDiff > 0.382 && lines[i].pctDiff < 1) {
+            lines[i].type = "CORRECTIONARM"; 
+          } else if (lines[i].pctDiff > 1) {
+            lines[i].type = "TRENDARM"; 
+          }
+          else {
+            lines[i].type = lines[i-1].type;
+            lines[i].ignore = true;
+          }
+
+        }
+
+        else if (lines[i - 1].type == "CORRECTIONARM") {
+          if (lines[i].pctDiff > 1) {
+            lines[i].type = "TRENDARM"; // "CORRECTIONARM"
+          } else {
+            lines[i].type = lines[i-1].type;
+            lines[i].ignore = true;
+          }
+        }
+
+      }
+      console.log("lines generated", lines);
+
+
+
+
+
+
+
+
+
+
+
+
+      let convertedData = data.map(e => { return [(new Date(e.time * 1000)).toISOString(), Math.round(e.HA.open), Math.round(e.HA.close), Math.round(e.HA.low), Math.round(e.HA.high)] });
+      console.log("We coverted data", convertedData);
+
+      data0 = splitData(convertedData);
+
+
+      data1 = data.map(e => e.markAsPOI ? e.HA.close : null);
+      data3 = data.map(e => Math.abs(e.diffPct) * 100 + 12000);
+      data2 = data.map(e => Math.abs(e.diffPct) > 0.382 ? e.HA.close : null);
+
+
+      console.log(data2)
+
+
+
+
+      option = {
+        title: {
+          text: '上证指数',
+          left: 0
+        },
+        tooltip: {
+          trigger: 'axis',
+          axisPointer: {
+            type: 'cross'
+          }
+        },
+        legend: {
+          data: ['Kurs', 'Trend', 'PCT', 'PCT2', 'MA30']
+        },
+        grid: {
+          left: '10%',
+          right: '10%',
+          bottom: '15%'
+        },
+        xAxis: {
+          type: 'category',
+          data: data0.categoryData,
+          scale: true,
+          boundaryGap: false,
+          axisLine: { onZero: false },
+          splitLine: { show: false },
+          splitNumber: 20,
+          min: 'dataMin',
+          max: 'dataMax'
+        },
+        yAxis: {
+          scale: true,
+          splitArea: {
+            show: true
+          }
+        },
+        dataZoom: [
+          {
+            type: 'inside',
+            start: 50,
+            end: 100
+          },
+          {
+            show: true,
+            type: 'slider',
+            top: '90%',
+            start: 50,
+            end: 100
+          }
+        ],
+        series: [
+          {
+            name: 'Kurs',
+            type: 'candlestick',
+            data: data0.values,
+            itemStyle: {
+              color: upColor,
+              color0: downColor,
+              borderColor: upBorderColor,
+              borderColor0: downBorderColor
+            },
+            markPoint: {
+              label: {
+                normal: {
+                  formatter: function (param) {
+                    return param != null ? Math.round(param.value) : '';
+                  }
+                }
+              },
+              data: [
+                {
+                  name: '',
+                  coord: ['2013/5/31', 2300],
+                  value: 2300,
+                  itemStyle: {
+                    color: 'rgb(41,60,85)'
+                  }
+                },
+                // {
+                //   name: 'highest value',
+                //   type: 'max',
+                //   valueDim: 'highest'
+                // },
+                // {
+                //   name: 'lowest value',
+                //   type: 'min',
+                //   valueDim: 'lowest'
+                // },
+                // {
+                //   name: 'average value on close',
+                //   type: 'average',
+                //   valueDim: 'close'
+                // }
+              ],
+              tooltip: {
+                formatter: function (param) {
+                  return param.name + '<br>' + (param.data.coord || '');
+                }
+              }
+            },
+            // markLine: {
+            //   symbol: ['none', 'none'],
+            //   data: [
+            //     [
+            //       {
+            //         name: 'from lowest to highest',
+            //         type: 'min',
+            //         valueDim: 'lowest',
+            //         symbol: 'circle',
+            //         symbolSize: 10,
+            //         label: {
+            //           show: false
+            //         },
+            //         emphasis: {
+            //           label: {
+            //             show: false
+            //           }
+            //         }
+            //       },
+            //       {
+            //         type: 'max',
+            //         valueDim: 'highest',
+            //         symbol: 'circle',
+            //         symbolSize: 10,
+            //         label: {
+            //           show: false
+            //         },
+            //         emphasis: {
+            //           label: {
+            //             show: false
+            //           }
+            //         }
+            //       }
+            //     ],
+            //     {
+            //       name: 'min line on close',
+            //       type: 'min',
+            //       valueDim: 'close'
+            //     },
+            //     {
+            //       name: 'max line on close',
+            //       type: 'max',
+            //       valueDim: 'close'
+            //     }
+            //   ]
+            // }
+          },
+
+          {
+            name: 'Trends',
+            type: 'line',
+            data: data1,
+            connectNulls: true,
+            lineStyle: {
+              opacity: 1
+            }
+          },
+          {
+            name: 'PCT',
+            type: 'line',
+            data: data2,
+            connectNulls: true,
+            smooth: false,
+            lineStyle: {
+              opacity: 1,
+            }
+          },
+
+          {
+            name: 'PCT2',
+            type: 'line',
+            data: data3,
+            connectNulls: true,
+            smooth: true,
+            lineStyle: {
+              opacity: 1,
+            }
+          },
+
+          // {
+          //   name: 'MA20',
+          //   type: 'line',
+          //   data: calculateMA(20),
+          //   smooth: true,
+          //   lineStyle: {
+          //     opacity: 0.5
+          //   }
+          // },
+          // {
+          //   name: 'MA30',
+          //   type: 'line',
+          //   data: calculateMA(30),
+          //   smooth: true,
+          //   lineStyle: {
+          //     opacity: 0.5
+          //   }
+          // },
+
+        ]
+      };
+      myChart.setOption(option);
+    })
+
+
+    function splitData(rawData) {
+      var categoryData = [];
+      var values = []
+      for (var i = 0; i < rawData.length; i++) {
+        categoryData.push(rawData[i].splice(0, 1)[0]);
+        values.push(rawData[i])
+      }
+      return {
+        categoryData: categoryData,
+        values: values
+      };
+    }
+
+    function calculateMA(dayCount) {
+      var result = [];
+      for (var i = 0, len = data0.values.length; i < len; i++) {
+        if (i < dayCount) {
+          result.push('-');
+          continue;
+        }
+        var sum = 0;
+        for (var j = 0; j < dayCount; j++) {
+          sum += data0.values[i - j][1];
+        }
+        result.push(sum / dayCount);
+      }
+      return result;
+    }
+
+
+    function getCandleValue(candleData, candleOhlcCode = 'close') {
+      return candleData[candleOhlcCode];
+    }
+
+
+
+    function calculateVNIndex(listOfPois) {
+      let lastDp = listOfPois[0];
+
+      let lastDirection = undefined;
+      for (let dp of listOfPois) {
+        if (dp.HA.close > lastDp.HA.close && lastDirection == undefined) {
+          lastDp.vnIndex = 1;
+          lastDirection = 1;
+        }
+        else if (dp.HA.close < lastDp.HA.close && lastDirection == undefined) {
+          lastDp.vnIndex = -1;
+          lastDirection = -1;
+        }
+
+        else if (dp.HA.close > lastDp.HA.close && lastDirection == 1) {
+          lastDp.vnIndex = 0;
+        }
+        else if (dp.HA.close > lastDp.HA.close && lastDirection == -1) {
+          lastDirection = 1;
+          lastDp.vnIndex = 1;
+        }
+
+        else if (dp.HA.close < lastDp.HA.close && lastDirection == 1) {
+          lastDirection = -1;
+          lastDp.vnIndex = -1;
+        }
+        else if (dp.HA.close < lastDp.HA.close && lastDirection == -1) {
+          lastDp.vnIndex = 0;
+        }
+
+        lastDp = dp;
+      }
+
+      return listOfPois;
+    }
+
+    function calculateDiffs(listOfPois) {
+      listOfPois[0].diff = 0;
+      for (let i = 0; i < listOfPois.length - 1; i++) {
+        listOfPois[i + 1].diff = getCandleValue(listOfPois[i + 1].HA) - getCandleValue(listOfPois[i].HA);
+      }
+
+      return listOfPois;
+    }
+
+    function cleanDuplicatePois(listOfPois) {
+      for (let i = 0; i < listOfPois.length - 1; i++) {
+        listOfPois[i].duplicatePoi = (listOfPois[i].vnIndex == listOfPois[i + 1].vnIndex);
+      }
+
+      return listOfPois;
+    }
+
+    function classifySignificantPoi(listOfPois) {
+      listOfPois[0].significantPoi = false;
+      listOfPois[1].significantPoi = false;
+      for (let i = listOfPois.length - 1; i > 1; i--) { // reverse loop!!!
+        let a = listOfPois[i];
+        let b = listOfPois[i - 1];
+        let c = listOfPois[i - 2];
+
+        a.significantPoi = a.vnIndex != 0 && b.vnIndex == 0 && c.vnIndex == 0;
+      }
+
+      return listOfPois
+    }
+
+    function classifyPois(listOfPois) {
+      for (let i = listOfPois.length - 1; i > 0; i--) { // reverse loop!!!
+        let a = listOfPois[i];
+        let b = listOfPois[i - 1];
+
+
+        // a.poiType kann nur: FALSEPOI, CORRECTIONPOI, TRENDARM
+
+
+        if (a.correctionPct > 0 && a.correctionPct < .318) {
+          // console.log('Ignore this one...', a);
+          a.poiType = "FALSE_POI";
+        }
+        else if (a.correctionPct > 0.318 && a.correctionPct < 1.00) {
+          // console.log('Perfect Correction Detected!!!', a);
+          a.poiType = "CORRECTION_POI";
+        }
+        else if (a.correctionPct > 1.00) {
+          // console.log('Killing current trend... what should I do?', a);
+          // a.poiType = "TRENDKILLER";
+          a.poiType = "TRENDARM";
+          // b.poiType = "TRENDSETTER";
+        }
+      }
+      return listOfPois;
+    }
+
+    function calculateFibForPois(listOfPois) {
+      listOfPois[0].correctionPct = 0;
+      for (let i = listOfPois.length - 1; i > 0; i--) {
+        let a = listOfPois[i];
+        let b = listOfPois[i - 1];
+
+        let correctionPct = Math.abs(a.diff / b.diff);
+        a.correctionPct = correctionPct;
+
+      }
+      return listOfPois;
+    }
+
+    function filterPois(listOfPois) {
+      return listOfPois.filter(p => p.significantPoi == true && p.duplicatePoi == false);
+      // return listOfPois.filter(p => p.significantPoi == true);
+    }
+
+
+
+
+    function findNextPoi(dps, startIndex, direction, maxDistance = 5, minCorrection, maxCorrection) {
+      let step = 0;
+      let dist = 0;
+      let value = dps[startIndex++]
+      let dpIndex = startIndex + dist + step;
+      let maximaIndex = undefined;
+      let maxima = undefined;
+      while (dist < maxDistance && dpIndex < dps.length - dist) {
+        // console.log("FNP", dist, step, dpIndex)
+        dpIndex = startIndex + dist + step;
+        let dp = dps[dpIndex];
+        if ((getCandleValue(dp.HA) > getCandleValue(maxima ? maxima.HA : value.HA) && direction) || (getCandleValue(dp.HA) < getCandleValue(maxima ? maxima.HA : value.HA) && !direction)) {
+          maxima = dp;
+          maximaIndex = dpIndex;
+          step += dist;
+          dist = 0;
+          value = dp;
+          continue;
+        } else {
+          dist++;
+        }
+      }
+
+      return { data: maxima, index: maximaIndex, step, dist, direction };
+    }
+
+
+
+    function findTrends(datapoints, poiList) {
+      let maxLength = datapoints.length;
+      let direction = true;
+      let result = {};
+
+      let i = 0;
+      while (i < datapoints.length - 3) {
+
+
+        for (let j = 0; j < 2; j++) {
+          direction = !direction;
+          result = findNextPoi(datapoints, i, direction, 3, undefined);
+
+          if (result.index) {
+
+            // console.log("Correction Found...", result)
+            break;
+          }
+        }
+
+        if (result.index) {
+          poiList.push(result);
+          datapoints[result.index].markAsPOI = true;
+          // console.log("TREND FOUND", i, result.index, result.data.HA.close, result.data.datetime, result.direction ? "UP" : "DOWN");
+          i = result.index;
+        } else {
+          i++
+        }
+
+
+      }
+    }
+
+
+  </script>
+</body>
+
+</html>
